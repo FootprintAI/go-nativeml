@@ -39,6 +39,8 @@ jobs:
           go-version: "1.24"
       - name: Build with CGO (llamacpp tag)
         run: CGO_ENABLED=1 go build -tags llamacpp ./ggml/llamacpp/...
+      - name: Build with CGO (whispercpp tag)
+        run: CGO_ENABLED=1 go build -tags whispercpp ./ggml/whispercpp/...
 
   build-libs:
     name: Build Libraries from Source (${{ matrix.os }})
@@ -68,9 +70,16 @@ jobs:
       - name: Build static libraries from source
         run: make build-libs
       - name: Verify CGO build with fresh libraries
-        run: CGO_ENABLED=1 go build -tags llamacpp ./ggml/llamacpp/...
-      - name: Upload prebuilt artifacts
+        run: |
+          CGO_ENABLED=1 go build -tags llamacpp ./ggml/llamacpp/...
+          CGO_ENABLED=1 go build -tags whispercpp ./ggml/whispercpp/...
+      - name: Upload llama.cpp prebuilt artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: prebuilt-${{ matrix.platform }}
-          path: third_party/llama.cpp/prebuilt/${{ matrix.platform }}/*.a
+          name: prebuilt-llamacpp-${{ matrix.platform }}
+          path: ggml/llamacpp/third_party/prebuilt/${{ matrix.platform }}/*.a
+      - name: Upload whisper.cpp prebuilt artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-whispercpp-${{ matrix.platform }}
+          path: ggml/whispercpp/third_party/prebuilt/${{ matrix.platform }}/*.a
