@@ -1,0 +1,8 @@
+# Build artifacts (source downloads, cmake dirs)
+third_party/llama.cpp/src/
+third_party/whisper.cpp/src/
+third_party/**/build/
+out/
+
+# Prebuilt .a files and headers ARE committed — do not ignore them
+# They enable: go get + go build -tags llamacpp (just works)

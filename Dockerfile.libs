@@ -1,0 +1,44 @@
+# Dockerfile.libs — build linux-amd64 static libraries for llama.cpp
+#
+# Usage:
+#   docker build -f Dockerfile.libs -o ./out .
+#
+# This extracts prebuilt .a files + headers into ./out/ on the host.
+
+FROM golang:1.24-bullseye AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake wget && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Copy version files so we can read versions from Go
+COPY go.mod ./
+COPY version.go ./
+COPY cmd/versioncmd/ ./cmd/versioncmd/
+
+# Read versions and download sources
+RUN LLAMA_VERSION=$(go run ./cmd/versioncmd llama.cpp) && \
+    echo "Downloading llama.cpp ${LLAMA_VERSION}..." && \
+    wget -qO llama.cpp.tar.gz "https://github.com/ggerganov/llama.cpp/archive/refs/tags/${LLAMA_VERSION}.tar.gz" && \
+    mkdir -p llama-src && \
+    tar xzf llama.cpp.tar.gz --strip-components=1 -C llama-src && \
+    rm llama.cpp.tar.gz
+
+# Build llama.cpp
+RUN cd llama-src && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# Collect artifacts
+RUN mkdir -p /out/llama.cpp/linux-amd64 /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
+    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64/ \; && \
+    cp llama-src/include/*.h /out/llama.cpp/include/ && \
+    cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
+    cp llama-src/common/common.h /out/llama.cpp/common/ && \
+    cp llama-src/common/sampling.h /out/llama.cpp/common/
+
+# Output stage — docker build -o extracts from here
+FROM scratch
+COPY --from=builder /out/ /
