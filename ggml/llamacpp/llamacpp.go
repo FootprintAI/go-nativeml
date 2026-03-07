@@ -14,7 +14,8 @@ package llamacpp
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-amd64
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/linux-amd64
 #cgo LDFLAGS: -lcommon -lllama -lggml-cpu -lggml-base -lggml -lstdc++ -lm
-#cgo darwin LDFLAGS: -framework Accelerate -framework Metal -framework Foundation
+#cgo darwin LDFLAGS: -lggml-blas -lggml-metal -L/usr/local/opt/libomp/lib -L/opt/homebrew/opt/libomp/lib -lomp -framework Accelerate -framework Metal -framework Foundation
+#cgo linux LDFLAGS: -lpthread -ldl -lrt -lgomp
 #include <stdlib.h>
 #include <stdbool.h>
 #include "wrapper.h"
