@@ -1,4 +1,4 @@
-# Dockerfile.libs — build linux-amd64 static libraries for llama.cpp
+# Dockerfile.libs — build linux-amd64 static libraries for llama.cpp and whisper.cpp
 #
 # Usage:
 #   docker build -f Dockerfile.libs -o ./out .
@@ -18,7 +18,7 @@ COPY go.mod ./
 COPY version.go ./
 COPY cmd/versioncmd/ ./cmd/versioncmd/
 
-# Read versions and download sources
+# Download llama.cpp
 RUN LLAMA_VERSION=$(go run ./cmd/versioncmd llama.cpp) && \
     echo "Downloading llama.cpp ${LLAMA_VERSION}..." && \
     wget -qO llama.cpp.tar.gz "https://github.com/ggerganov/llama.cpp/archive/refs/tags/${LLAMA_VERSION}.tar.gz" && \
@@ -26,18 +26,37 @@ RUN LLAMA_VERSION=$(go run ./cmd/versioncmd llama.cpp) && \
     tar xzf llama.cpp.tar.gz --strip-components=1 -C llama-src && \
     rm llama.cpp.tar.gz
 
+# Download whisper.cpp
+RUN WHISPER_VERSION=$(go run ./cmd/versioncmd whisper.cpp) && \
+    echo "Downloading whisper.cpp ${WHISPER_VERSION}..." && \
+    wget -qO whisper.cpp.tar.gz "https://github.com/ggerganov/whisper.cpp/archive/refs/tags/${WHISPER_VERSION}.tar.gz" && \
+    mkdir -p whisper-src && \
+    tar xzf whisper.cpp.tar.gz --strip-components=1 -C whisper-src && \
+    rm whisper.cpp.tar.gz
+
 # Build llama.cpp
 RUN cd llama-src && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release -j$(nproc)
 
-# Collect artifacts
+# Build whisper.cpp
+RUN cd whisper-src && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# Collect llama.cpp artifacts
 RUN mkdir -p /out/llama.cpp/linux-amd64 /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
     find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64/ \; && \
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
     cp llama-src/common/sampling.h /out/llama.cpp/common/
+
+# Collect whisper.cpp artifacts
+RUN mkdir -p /out/whisper.cpp/linux-amd64 /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
+    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64/ \; && \
+    cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
+    cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
 
 # Output stage — docker build -o extracts from here
 FROM scratch

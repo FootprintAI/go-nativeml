@@ -8,11 +8,11 @@
 package llamacpp
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../third_party/llama.cpp/include -I${SRCDIR}/../../third_party/llama.cpp/ggml/include
-#cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/../../third_party/llama.cpp/include -I${SRCDIR}/../../third_party/llama.cpp/ggml/include -I${SRCDIR}/../../third_party/llama.cpp/common
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../third_party/llama.cpp/prebuilt/darwin-arm64
-#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../third_party/llama.cpp/prebuilt/darwin-amd64
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../third_party/llama.cpp/prebuilt/linux-amd64
+#cgo CFLAGS: -I${SRCDIR}/third_party/include -I${SRCDIR}/third_party/ggml/include
+#cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/third_party/include -I${SRCDIR}/third_party/ggml/include -I${SRCDIR}/third_party/common
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-arm64
+#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-amd64
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/linux-amd64
 #cgo LDFLAGS: -lcommon -lllama -lggml-cpu -lggml-base -lggml -lstdc++ -lm
 #cgo darwin LDFLAGS: -framework Accelerate -framework Metal -framework Foundation
 #include <stdlib.h>

@@ -1,7 +1,7 @@
 # Build artifacts (source downloads, cmake dirs)
-third_party/llama.cpp/src/
-third_party/whisper.cpp/src/
-third_party/**/build/
+ggml/llamacpp/third_party/src/
+ggml/whispercpp/third_party/src/
+**/build/
 out/
 
 # Prebuilt .a files and headers ARE committed — do not ignore them
