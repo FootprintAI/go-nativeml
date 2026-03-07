@@ -1,3 +1,5 @@
+//go:build llamacpp
+
 // Copyright 2025 FootprintAI
 // SPDX-License-Identifier: Apache-2.0
 //
