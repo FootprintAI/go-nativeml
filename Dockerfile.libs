@@ -3,9 +3,12 @@
 # Usage:
 #   docker build -f Dockerfile.libs -o ./out .
 #
+# Build + link test (ensures .a files link correctly):
+#   docker build -f Dockerfile.libs --target build-test .
+#
 # This extracts prebuilt .a files + headers into ./out/ on the host.
 
-FROM golang:1.24-bullseye AS builder
+FROM golang:1.24-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake wget && \
@@ -57,6 +60,43 @@ RUN mkdir -p /out/whisper.cpp/linux-amd64 /out/whisper.cpp/include /out/whisper.
     find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64/ \; && \
     cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
     cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
+
+# ============================================================================
+# Build test — verifies the .a files link correctly with Go CGO
+# ============================================================================
+FROM golang:1.24-bookworm AS build-test
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+# Copy freshly built .a files into the source tree
+COPY --from=builder /out/llama.cpp/linux-amd64/ /src/ggml/llamacpp/third_party/prebuilt/linux-amd64/
+COPY --from=builder /out/llama.cpp/include/ /src/ggml/llamacpp/third_party/include/
+COPY --from=builder /out/llama.cpp/ggml/include/ /src/ggml/llamacpp/third_party/ggml/include/
+COPY --from=builder /out/llama.cpp/common/ /src/ggml/llamacpp/third_party/common/
+COPY --from=builder /out/whisper.cpp/linux-amd64/ /src/ggml/whispercpp/third_party/prebuilt/linux-amd64/
+COPY --from=builder /out/whisper.cpp/include/ /src/ggml/whispercpp/third_party/include/
+COPY --from=builder /out/whisper.cpp/ggml/include/ /src/ggml/whispercpp/third_party/ggml/include/
+
+# Test stub builds (no CGO)
+RUN CGO_ENABLED=0 go build ./ggml/llamacpp/... && \
+    CGO_ENABLED=0 go build ./ggml/whispercpp/... && \
+    echo "stub builds OK"
+
+# Test CGO builds (link against .a files)
+RUN CGO_ENABLED=1 go build -tags llamacpp ./ggml/llamacpp/... && \
+    echo "llamacpp CGO build OK"
+RUN CGO_ENABLED=1 go build -tags whispercpp ./ggml/whispercpp/... && \
+    echo "whispercpp CGO build OK"
+
+# Run stub tests
+RUN CGO_ENABLED=0 go test ./ggml/llamacpp/... && \
+    CGO_ENABLED=0 go test ./ggml/whispercpp/... && \
+    echo "all tests passed"
 
 # Output stage — docker build -o extracts from here
 FROM scratch

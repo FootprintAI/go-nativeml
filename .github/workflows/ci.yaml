@@ -28,10 +28,8 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-amd64
-          - os: macos-13
-            platform: darwin-amd64
-          # - os: macos-latest     # enable when darwin-arm64 prebuilt .a files are added
-          #   platform: darwin-arm64
+          - os: macos-latest
+            platform: darwin-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -51,10 +49,8 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-amd64
-          - os: macos-13
-            platform: darwin-amd64
-          # - os: macos-latest
-          #   platform: darwin-arm64
+          - os: macos-latest
+            platform: darwin-arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

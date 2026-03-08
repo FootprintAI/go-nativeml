@@ -14,9 +14,9 @@ package whispercpp
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-amd64
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/linux-amd64
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/linux-arm64
-#cgo LDFLAGS: -lwhisper -lcommon -lggml-cpu -lggml-base -lggml -lstdc++ -lm
-#cgo darwin LDFLAGS: -lggml-blas -lggml-metal -L/usr/local/opt/libomp/lib -L/opt/homebrew/opt/libomp/lib -lomp -framework Accelerate -framework Metal -framework Foundation
-#cgo linux LDFLAGS: -lpthread -ldl -lrt -lgomp
+#cgo LDFLAGS: -lstdc++ -lm
+#cgo darwin LDFLAGS: -lwhisper -lcommon -lggml-cpu -lggml-base -lggml -lggml-blas -lggml-metal -L/usr/local/opt/libomp/lib -L/opt/homebrew/opt/libomp/lib -lomp -framework Accelerate -framework Metal -framework Foundation
+#cgo linux LDFLAGS: -Wl,--start-group -lwhisper -lcommon -lggml-cpu -lggml-base -lggml -Wl,--end-group -lpthread -ldl -lrt -lgomp
 #include <stdlib.h>
 #include "whisper.h"
 */
