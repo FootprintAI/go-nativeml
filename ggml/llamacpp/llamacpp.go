@@ -12,10 +12,7 @@ package llamacpp
 #cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/third_party/include -I${SRCDIR}/third_party/ggml/include -I${SRCDIR}/third_party/common
 #cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-arm64
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-amd64
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/linux-amd64
-#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/linux-arm64
 #cgo darwin LDFLAGS: -lcommon -lllama -lggml-cpu -lggml-base -lggml -lggml-blas -lggml-metal -L/usr/local/opt/libomp/lib -L/opt/homebrew/opt/libomp/lib -lomp -framework Accelerate -framework Metal -framework Foundation -lstdc++ -lm
-#cgo linux LDFLAGS: -Wl,--start-group -lcommon -lllama -lggml-cpu -lggml-base -lggml -Wl,--end-group -lstdc++ -lm -lpthread -ldl -lrt -lgomp
 #include <stdlib.h>
 #include <stdbool.h>
 #include "wrapper.h"
