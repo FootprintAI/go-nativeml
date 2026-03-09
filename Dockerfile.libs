@@ -1,17 +1,28 @@
 # Dockerfile.libs — build linux-amd64 static libraries for llama.cpp and whisper.cpp
 #
-# Usage:
+# Usage (CPU, default):
 #   docker build -f Dockerfile.libs -o ./out .
+#
+# Usage (CUDA):
+#   docker build -f Dockerfile.libs --build-arg GPU_BACKEND=cuda -o ./out .
+#
+# Usage (Vulkan):
+#   docker build -f Dockerfile.libs --build-arg GPU_BACKEND=vulkan -o ./out .
 #
 # Build + link test (ensures .a files link correctly):
 #   docker build -f Dockerfile.libs --target build-test .
 #
 # This extracts prebuilt .a files + headers into ./out/ on the host.
 
-FROM golang:1.24-bookworm AS builder
+ARG GPU_BACKEND=cpu
+
+# ============================================================================
+# Stage: Download sources (shared by all backends)
+# ============================================================================
+FROM golang:1.24-bookworm AS sources
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake wget && \
+    wget && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -37,12 +48,25 @@ RUN WHISPER_VERSION=$(go run ./cmd/versioncmd whisper.cpp) && \
     tar xzf whisper.cpp.tar.gz --strip-components=1 -C whisper-src && \
     rm whisper.cpp.tar.gz
 
-# Build llama.cpp
+# ============================================================================
+# Builder: CPU (default)
+# ============================================================================
+FROM golang:1.24-bookworm AS builder-cpu
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY --from=sources /src/llama-src llama-src
+COPY --from=sources /src/whisper-src whisper-src
+
+# Build llama.cpp (CPU)
 RUN cd llama-src && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release -j$(nproc)
 
-# Build whisper.cpp
+# Build whisper.cpp (CPU)
 RUN cd whisper-src && \
     cmake -B build -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release -j$(nproc)
@@ -62,36 +86,157 @@ RUN mkdir -p /out/whisper.cpp/linux-amd64 /out/whisper.cpp/include /out/whisper.
     cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
 
 # ============================================================================
-# Build test — verifies the .a files link correctly with Go CGO
+# Builder: CUDA
 # ============================================================================
-FROM golang:1.24-bookworm AS build-test
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder-cuda
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake wget && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY --from=sources /src/llama-src llama-src
+COPY --from=sources /src/whisper-src whisper-src
+
+# Build llama.cpp (CUDA)
+RUN cd llama-src && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON && \
+    cmake --build build --config Release -j$(nproc)
+
+# Build whisper.cpp (CUDA)
+RUN cd whisper-src && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON && \
+    cmake --build build --config Release -j$(nproc)
+
+# Collect llama.cpp artifacts (CUDA variant)
+RUN mkdir -p /out/llama.cpp/linux-amd64-cuda /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
+    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64-cuda/ \; && \
+    cp llama-src/include/*.h /out/llama.cpp/include/ && \
+    cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
+    cp llama-src/common/common.h /out/llama.cpp/common/ && \
+    cp llama-src/common/sampling.h /out/llama.cpp/common/
+
+# Collect whisper.cpp artifacts (CUDA variant)
+RUN mkdir -p /out/whisper.cpp/linux-amd64-cuda /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
+    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64-cuda/ \; && \
+    cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
+    cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
+
+# ============================================================================
+# Builder: Vulkan
+# ============================================================================
+# Use Ubuntu 24.04 for Vulkan — bookworm's Vulkan 1.3.239 is too old
+# (llama.cpp b8220+ needs VK_EXT_layer_settings from Vulkan 1.3.261+)
+FROM ubuntu:24.04 AS builder-vulkan
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake wget ca-certificates libvulkan-dev glslang-tools glslc && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY --from=sources /src/llama-src llama-src
+COPY --from=sources /src/whisper-src whisper-src
+
+# Build llama.cpp (Vulkan)
+RUN cd llama-src && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=ON && \
+    cmake --build build --config Release -j$(nproc)
+
+# Build whisper.cpp (Vulkan)
+RUN cd whisper-src && \
+    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=ON && \
+    cmake --build build --config Release -j$(nproc)
+
+# Collect llama.cpp artifacts (Vulkan variant)
+RUN mkdir -p /out/llama.cpp/linux-amd64-vulkan /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
+    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64-vulkan/ \; && \
+    cp llama-src/include/*.h /out/llama.cpp/include/ && \
+    cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
+    cp llama-src/common/common.h /out/llama.cpp/common/ && \
+    cp llama-src/common/sampling.h /out/llama.cpp/common/
+
+# Collect whisper.cpp artifacts (Vulkan variant)
+RUN mkdir -p /out/whisper.cpp/linux-amd64-vulkan /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
+    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64-vulkan/ \; && \
+    cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
+    cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
+
+# ============================================================================
+# Dynamic backend selection — picks the right builder stage
+# ============================================================================
+FROM builder-${GPU_BACKEND} AS builder
+
+# ============================================================================
+# Build test bases — provide the right link libraries per backend
+# ============================================================================
+FROM golang:1.24-bookworm AS build-test-base-cpu
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential libgomp1 && \
     rm -rf /var/lib/apt/lists/*
 
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS build-test-base-cuda
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libgomp1 wget && \
+    rm -rf /var/lib/apt/lists/* && \
+    wget -qO go.tar.gz https://go.dev/dl/go1.24.6.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go.tar.gz && rm go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+FROM ubuntu:24.04 AS build-test-base-vulkan
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential libgomp1 libvulkan-dev wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    wget -qO go.tar.gz https://go.dev/dl/go1.24.6.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go.tar.gz && rm go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# ============================================================================
+# Build test — verifies the .a files link correctly with Go CGO
+# ============================================================================
+FROM build-test-base-${GPU_BACKEND} AS build-test
+
+ARG GPU_BACKEND=cpu
+
 WORKDIR /src
 COPY . .
 
+# Determine prebuilt directory suffix based on GPU_BACKEND
+RUN SUFFIX="" && \
+    if [ "$GPU_BACKEND" = "cuda" ]; then SUFFIX="-cuda"; fi && \
+    if [ "$GPU_BACKEND" = "vulkan" ]; then SUFFIX="-vulkan"; fi && \
+    echo "Using prebuilt suffix: linux-amd64${SUFFIX}"
+
 # Copy freshly built .a files into the source tree
-COPY --from=builder /out/llama.cpp/linux-amd64/ /src/ggml/llamacpp/third_party/prebuilt/linux-amd64/
+COPY --from=builder /out/llama.cpp/linux-amd64*/ /tmp/llama-libs/
 COPY --from=builder /out/llama.cpp/include/ /src/ggml/llamacpp/third_party/include/
 COPY --from=builder /out/llama.cpp/ggml/include/ /src/ggml/llamacpp/third_party/ggml/include/
 COPY --from=builder /out/llama.cpp/common/ /src/ggml/llamacpp/third_party/common/
-COPY --from=builder /out/whisper.cpp/linux-amd64/ /src/ggml/whispercpp/third_party/prebuilt/linux-amd64/
+COPY --from=builder /out/whisper.cpp/linux-amd64*/ /tmp/whisper-libs/
 COPY --from=builder /out/whisper.cpp/include/ /src/ggml/whispercpp/third_party/include/
 COPY --from=builder /out/whisper.cpp/ggml/include/ /src/ggml/whispercpp/third_party/ggml/include/
 
-# Test stub builds (no CGO)
-RUN CGO_ENABLED=0 go build ./ggml/llamacpp/... && \
-    CGO_ENABLED=0 go build ./ggml/whispercpp/... && \
-    echo "stub builds OK"
+# Copy .a files to correct prebuilt directory based on GPU_BACKEND
+RUN SUFFIX="" && \
+    if [ "$GPU_BACKEND" = "cuda" ]; then SUFFIX="-cuda"; fi && \
+    if [ "$GPU_BACKEND" = "vulkan" ]; then SUFFIX="-vulkan"; fi && \
+    mkdir -p /src/ggml/llamacpp/third_party/prebuilt/linux-amd64${SUFFIX} && \
+    mkdir -p /src/ggml/whispercpp/third_party/prebuilt/linux-amd64${SUFFIX} && \
+    cp /tmp/llama-libs/*.a /src/ggml/llamacpp/third_party/prebuilt/linux-amd64${SUFFIX}/ && \
+    cp /tmp/whisper-libs/*.a /src/ggml/whispercpp/third_party/prebuilt/linux-amd64${SUFFIX}/
 
-# Test CGO builds (link against .a files)
-RUN CGO_ENABLED=1 go build -tags llamacpp ./ggml/llamacpp/... && \
-    echo "llamacpp CGO build OK"
-RUN CGO_ENABLED=1 go build -tags whispercpp ./ggml/whispercpp/... && \
-    echo "whispercpp CGO build OK"
+# Determine build tags based on GPU_BACKEND
+RUN LLAMA_TAGS="llamacpp" && \
+    WHISPER_TAGS="whispercpp" && \
+    if [ "$GPU_BACKEND" = "cuda" ]; then LLAMA_TAGS="llamacpp,cuda"; WHISPER_TAGS="whispercpp,cuda"; fi && \
+    if [ "$GPU_BACKEND" = "vulkan" ]; then LLAMA_TAGS="llamacpp,vulkan"; WHISPER_TAGS="whispercpp,vulkan"; fi && \
+    echo "Build tags: llama=${LLAMA_TAGS} whisper=${WHISPER_TAGS}" && \
+    CGO_ENABLED=0 go build ./ggml/llamacpp/... && \
+    CGO_ENABLED=0 go build ./ggml/whispercpp/... && \
+    echo "stub builds OK" && \
+    CGO_ENABLED=1 go build -tags "${LLAMA_TAGS}" ./ggml/llamacpp/... && \
+    echo "llamacpp CGO build OK (${LLAMA_TAGS})" && \
+    CGO_ENABLED=1 go build -tags "${WHISPER_TAGS}" ./ggml/whispercpp/... && \
+    echo "whispercpp CGO build OK (${WHISPER_TAGS})"
 
 # Run stub tests
 RUN CGO_ENABLED=0 go test ./ggml/llamacpp/... && \
