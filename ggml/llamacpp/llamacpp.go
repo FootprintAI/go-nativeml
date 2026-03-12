@@ -173,15 +173,53 @@ func (c *Context) Generate(prompt string, opts ...GenerateOption) (string, error
 	return sb.String(), nil
 }
 
-// streamState holds the callback state passed through CGO.
+// streamState holds the callback state for a generation request.
 type streamState struct {
 	cb      func(string) bool
 	stopped bool
 }
 
+// callbackRegistry stores streamState objects keyed by an integer handle.
+// This avoids passing Go pointers (which contain other Go pointers like
+// function closures) to C, which violates CGo pointer rules.
+var (
+	callbackMu       sync.Mutex
+	callbackRegistry = map[uintptr]*streamState{}
+	callbackNextID   uintptr
+)
+
+// registerCallback stores a streamState and returns an opaque handle
+// that can safely be passed to C as a uintptr.
+func registerCallback(state *streamState) uintptr {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	callbackNextID++
+	id := callbackNextID
+	callbackRegistry[id] = state
+	return id
+}
+
+// unregisterCallback removes a streamState from the registry.
+func unregisterCallback(id uintptr) {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	delete(callbackRegistry, id)
+}
+
+// lookupCallback retrieves a streamState by handle.
+func lookupCallback(id uintptr) *streamState {
+	callbackMu.Lock()
+	defer callbackMu.Unlock()
+	return callbackRegistry[id]
+}
+
 //export goTokenCallback
 func goTokenCallback(token *C.char, length C.int, userData unsafe.Pointer) C.int {
-	state := (*streamState)(userData)
+	id := uintptr(userData)
+	state := lookupCallback(id)
+	if state == nil {
+		return 0
+	}
 	goToken := C.GoStringN(token, length)
 	if !state.cb(goToken) {
 		state.stopped = true
@@ -220,7 +258,14 @@ func (c *Context) GenerateStream(prompt string, cb func(token string) bool, opts
 	params.seed = C.int(cfg.seed)
 	params.penalty_last_n = C.int(cfg.penaltyLastN)
 
+	// Use a handle registry instead of passing Go pointers to C.
+	// streamState contains a Go function pointer (cb), so passing it
+	// directly to C via unsafe.Pointer violates CGo pointer rules:
+	//   "cgo argument has Go pointer to unpinned Go pointer"
+	// Instead, store the state in a Go-side map and pass only an integer handle.
 	state := &streamState{cb: cb}
+	handle := registerCallback(state)
+	defer unregisterCallback(handle)
 
 	rc := C.go_llama_generate(
 		unsafe.Pointer(c.c),
@@ -228,7 +273,7 @@ func (c *Context) GenerateStream(prompt string, cb func(token string) bool, opts
 		cprompt,
 		params,
 		C.go_llama_token_callback(C.goTokenCallbackBridge),
-		unsafe.Pointer(state),
+		unsafe.Pointer(handle),
 	)
 
 	if rc != 0 {
