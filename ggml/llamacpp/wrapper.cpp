@@ -55,6 +55,10 @@ int go_llama_generate(
         return -1;
     }
 
+    // Clear KV cache from any previous generation so positions don't collide.
+    // Use data=false to only clear metadata (positions/sequences), not the underlying buffers.
+    llama_memory_clear(llama_get_memory(ctx), false);
+
     const llama_vocab* vocab = llama_model_get_vocab(model);
     if (!vocab) {
         set_error("failed to get vocab from model");
@@ -120,6 +124,7 @@ int go_llama_generate(
     int n_cur = n_tokens;
     const int n_ctx = (int)llama_n_ctx(ctx);
     const int max_tokens = params.max_tokens > 0 ? params.max_tokens : 512;
+    int generated = 0;
 
     for (int i = 0; i < max_tokens; i++) {
         // Sample next token.
@@ -131,20 +136,22 @@ int go_llama_generate(
             break;
         }
 
+        generated++;
+
         // Convert token to text.
         int n_piece = llama_token_to_piece(vocab, new_token,
                                            piece_buf, sizeof(piece_buf) - 1,
                                            /*lstrip=*/0, /*special=*/false);
         if (n_piece < 0) {
-            // Token requires more buffer space — skip it.
             continue;
         }
         piece_buf[n_piece] = '\0';
 
         // Stream token to callback.
         if (callback) {
-            if (!callback(piece_buf, n_piece, user_data)) {
-                break; // caller requested stop
+            bool cb_ok = callback(piece_buf, n_piece, user_data);
+            if (!cb_ok) {
+                break;
             }
         }
 
