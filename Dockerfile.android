@@ -1,0 +1,168 @@
+# Dockerfile.android — cross-compile android-arm64 static libraries via Android NDK
+#
+# Usage:
+#   docker build -f Dockerfile.android -o ./out .
+#
+# Build + link test (ensures .a files cross-link correctly with Go CGO):
+#   docker build -f Dockerfile.android --target build-test .
+#
+# This extracts prebuilt .a files + headers for android-arm64 into ./out/.
+
+# ============================================================================
+# Stage: Download sources
+# ============================================================================
+FROM golang:1.24-bookworm AS sources
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# Copy version files so we can read versions from Go
+COPY go.mod ./
+COPY version.go ./
+COPY cmd/versioncmd/ ./cmd/versioncmd/
+
+# Download llama.cpp
+RUN LLAMA_VERSION=$(go run ./cmd/versioncmd llama.cpp) && \
+    echo "Downloading llama.cpp ${LLAMA_VERSION}..." && \
+    wget -qO llama.cpp.tar.gz "https://github.com/ggerganov/llama.cpp/archive/refs/tags/${LLAMA_VERSION}.tar.gz" && \
+    mkdir -p llama-src && \
+    tar xzf llama.cpp.tar.gz --strip-components=1 -C llama-src && \
+    rm llama.cpp.tar.gz
+
+# Download whisper.cpp
+RUN WHISPER_VERSION=$(go run ./cmd/versioncmd whisper.cpp) && \
+    echo "Downloading whisper.cpp ${WHISPER_VERSION}..." && \
+    wget -qO whisper.cpp.tar.gz "https://github.com/ggerganov/whisper.cpp/archive/refs/tags/${WHISPER_VERSION}.tar.gz" && \
+    mkdir -p whisper-src && \
+    tar xzf whisper.cpp.tar.gz --strip-components=1 -C whisper-src && \
+    rm whisper.cpp.tar.gz
+
+# ============================================================================
+# Builder: Android ARM64 via NDK
+# ============================================================================
+FROM golang:1.24-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake wget unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Android NDK r27c
+ARG NDK_VERSION=r27c
+RUN wget -qO ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" && \
+    unzip -q ndk.zip -d /opt && \
+    rm ndk.zip
+ENV ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}
+
+WORKDIR /src
+COPY --from=sources /src/llama-src llama-src
+COPY --from=sources /src/whisper-src whisper-src
+
+# NDK strip tool for removing debug symbols from .a files
+ENV NDK_STRIP=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+
+# Build llama.cpp for android-arm64
+RUN cd llama-src && \
+    cmake -B build \
+        -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=arm64-v8a \
+        -DANDROID_PLATFORM=android-28 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_OPENMP=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# Build whisper.cpp for android-arm64
+RUN cd whisper-src && \
+    cmake -B build \
+        -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=arm64-v8a \
+        -DANDROID_PLATFORM=android-28 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_OPENMP=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# Collect llama.cpp artifacts and strip debug symbols
+RUN mkdir -p /out/llama.cpp/android-arm64 /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
+    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/android-arm64/ \; && \
+    find /out/llama.cpp/android-arm64 -name "*.a" -exec ${NDK_STRIP} --strip-debug {} \; && \
+    cp llama-src/include/*.h /out/llama.cpp/include/ && \
+    cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
+    cp llama-src/common/common.h /out/llama.cpp/common/ && \
+    cp llama-src/common/sampling.h /out/llama.cpp/common/
+
+# Collect whisper.cpp artifacts and strip debug symbols
+RUN mkdir -p /out/whisper.cpp/android-arm64 /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
+    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/android-arm64/ \; && \
+    find /out/whisper.cpp/android-arm64 -name "*.a" -exec ${NDK_STRIP} --strip-debug {} \; && \
+    cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
+    cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
+
+# ============================================================================
+# Build test — verifies .a files cross-link correctly with Go CGO + NDK
+# ============================================================================
+FROM golang:1.24-bookworm AS build-test
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential wget unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Android NDK (same version as builder)
+ARG NDK_VERSION=r27c
+RUN wget -qO ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" && \
+    unzip -q ndk.zip -d /opt && \
+    rm ndk.zip
+ENV ANDROID_NDK_HOME=/opt/android-ndk-${NDK_VERSION}
+
+# NDK toolchain paths
+ENV NDK_TOOLCHAIN=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64
+ENV CC_android_arm64=${NDK_TOOLCHAIN}/bin/aarch64-linux-android28-clang
+ENV CXX_android_arm64=${NDK_TOOLCHAIN}/bin/aarch64-linux-android28-clang++
+
+WORKDIR /src
+COPY . .
+
+# Copy freshly built .a files and headers into the source tree
+COPY --from=builder /out/llama.cpp/android-arm64/ /src/ggml/llamacpp/third_party/prebuilt/android-arm64/
+COPY --from=builder /out/llama.cpp/include/ /src/ggml/llamacpp/third_party/include/
+COPY --from=builder /out/llama.cpp/ggml/include/ /src/ggml/llamacpp/third_party/ggml/include/
+COPY --from=builder /out/llama.cpp/common/ /src/ggml/llamacpp/third_party/common/
+COPY --from=builder /out/whisper.cpp/android-arm64/ /src/ggml/whispercpp/third_party/prebuilt/android-arm64/
+COPY --from=builder /out/whisper.cpp/include/ /src/ggml/whispercpp/third_party/include/
+COPY --from=builder /out/whisper.cpp/ggml/include/ /src/ggml/whispercpp/third_party/ggml/include/
+
+# Verify stub builds (no tags, no CGO)
+RUN CGO_ENABLED=0 go build ./ggml/llamacpp/... && \
+    CGO_ENABLED=0 go build ./ggml/whispercpp/... && \
+    echo "stub builds OK"
+
+# Verify CGO cross-compilation links against android-arm64 .a files
+RUN CGO_ENABLED=1 \
+    GOOS=android \
+    GOARCH=arm64 \
+    CC=${CC_android_arm64} \
+    CXX=${CXX_android_arm64} \
+    go build -tags llamacpp ./ggml/llamacpp/... && \
+    echo "llamacpp android-arm64 CGO build OK"
+
+RUN CGO_ENABLED=1 \
+    GOOS=android \
+    GOARCH=arm64 \
+    CC=${CC_android_arm64} \
+    CXX=${CXX_android_arm64} \
+    go build -tags whispercpp ./ggml/whispercpp/... && \
+    echo "whispercpp android-arm64 CGO build OK"
+
+# Run stub tests
+RUN CGO_ENABLED=0 go test ./ggml/llamacpp/... && \
+    CGO_ENABLED=0 go test ./ggml/whispercpp/... && \
+    echo "all tests passed"
+
+# ============================================================================
+# Output stage — docker build -o extracts from here
+# ============================================================================
+FROM scratch
+COPY --from=builder /out/ /

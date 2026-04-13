@@ -63,25 +63,27 @@ COPY --from=sources /src/whisper-src whisper-src
 
 # Build llama.cpp (CPU)
 RUN cd llama-src && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release -j$(nproc)
 
 # Build whisper.cpp (CPU)
 RUN cd whisper-src && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF && \
     cmake --build build --config Release -j$(nproc)
 
-# Collect llama.cpp artifacts
+# Collect llama.cpp artifacts and strip debug symbols
 RUN mkdir -p /out/llama.cpp/linux-amd64 /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
     find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64/ \; && \
+    find /out/llama.cpp/linux-amd64 -name "*.a" -exec strip --strip-debug {} \; && \
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
     cp llama-src/common/sampling.h /out/llama.cpp/common/
 
-# Collect whisper.cpp artifacts
+# Collect whisper.cpp artifacts and strip debug symbols
 RUN mkdir -p /out/whisper.cpp/linux-amd64 /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
     find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64/ \; && \
+    find /out/whisper.cpp/linux-amd64 -name "*.a" -exec strip --strip-debug {} \; && \
     cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
     cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
 
@@ -100,25 +102,27 @@ COPY --from=sources /src/whisper-src whisper-src
 
 # Build llama.cpp (CUDA)
 RUN cd llama-src && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON && \
     cmake --build build --config Release -j$(nproc)
 
 # Build whisper.cpp (CUDA)
 RUN cd whisper-src && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON && \
     cmake --build build --config Release -j$(nproc)
 
-# Collect llama.cpp artifacts (CUDA variant)
+# Collect llama.cpp artifacts (CUDA variant) and strip debug symbols
 RUN mkdir -p /out/llama.cpp/linux-amd64-cuda /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
     find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64-cuda/ \; && \
+    find /out/llama.cpp/linux-amd64-cuda -name "*.a" -exec strip --strip-debug {} \; && \
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
     cp llama-src/common/sampling.h /out/llama.cpp/common/
 
-# Collect whisper.cpp artifacts (CUDA variant)
+# Collect whisper.cpp artifacts (CUDA variant) and strip debug symbols
 RUN mkdir -p /out/whisper.cpp/linux-amd64-cuda /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
     find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64-cuda/ \; && \
+    find /out/whisper.cpp/linux-amd64-cuda -name "*.a" -exec strip --strip-debug {} \; && \
     cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
     cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
 
@@ -139,25 +143,27 @@ COPY --from=sources /src/whisper-src whisper-src
 
 # Build llama.cpp (Vulkan)
 RUN cd llama-src && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=ON && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=ON && \
     cmake --build build --config Release -j$(nproc)
 
 # Build whisper.cpp (Vulkan)
 RUN cd whisper-src && \
-    cmake -B build -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=ON && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=ON && \
     cmake --build build --config Release -j$(nproc)
 
-# Collect llama.cpp artifacts (Vulkan variant)
+# Collect llama.cpp artifacts (Vulkan variant) and strip debug symbols
 RUN mkdir -p /out/llama.cpp/linux-amd64-vulkan /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
     find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64-vulkan/ \; && \
+    find /out/llama.cpp/linux-amd64-vulkan -name "*.a" -exec strip --strip-debug {} \; && \
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
     cp llama-src/common/sampling.h /out/llama.cpp/common/
 
-# Collect whisper.cpp artifacts (Vulkan variant)
+# Collect whisper.cpp artifacts (Vulkan variant) and strip debug symbols
 RUN mkdir -p /out/whisper.cpp/linux-amd64-vulkan /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
     find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64-vulkan/ \; && \
+    find /out/whisper.cpp/linux-amd64-vulkan -name "*.a" -exec strip --strip-debug {} \; && \
     cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
     cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
 
