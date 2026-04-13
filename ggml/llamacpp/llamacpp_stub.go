@@ -74,10 +74,12 @@ func WithMLock(enabled bool) ModelOption { return func(*modelConfig) {} }
 type ContextOption func(*contextConfig)
 type contextConfig struct{}
 
-func WithContextSize(n int) ContextOption  { return func(*contextConfig) {} }
-func WithBatchSize(n int) ContextOption    { return func(*contextConfig) {} }
-func WithThreads(n int) ContextOption      { return func(*contextConfig) {} }
-func WithEmbeddings() ContextOption        { return func(*contextConfig) {} }
+func WithContextSize(n int) ContextOption   { return func(*contextConfig) {} }
+func WithBatchSize(n int) ContextOption     { return func(*contextConfig) {} }
+func WithThreads(n int) ContextOption       { return func(*contextConfig) {} }
+func WithEmbeddings() ContextOption         { return func(*contextConfig) {} }
+func WithTypeK(t GGMLType) ContextOption    { return func(*contextConfig) {} }
+func WithTypeV(t GGMLType) ContextOption    { return func(*contextConfig) {} }
 
 // GenerateOption configures text generation (stub).
 type GenerateOption func(*generateConfig)

@@ -15,4 +15,5 @@ import "embed"
 //go:embed third_party/prebuilt/linux-amd64-cuda/*.a
 //go:embed third_party/prebuilt/linux-amd64-vulkan/*.a
 //go:embed third_party/prebuilt/linux-arm64/*.a
+//go:embed third_party/prebuilt/android-arm64/*.a
 var _ embed.FS

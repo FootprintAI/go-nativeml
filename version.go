@@ -1,7 +1,7 @@
 package gonativeml
 
 const (
-	Version           = "v0.1.5"
-	LlamaCppVersion   = "b8220"
+	Version           = "v0.1.7"
+	LlamaCppVersion   = "b8772"
 	WhisperCppVersion = "v1.8.3"
 )

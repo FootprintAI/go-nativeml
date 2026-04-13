@@ -45,6 +45,8 @@ type contextConfig struct {
 	batchSize   int
 	threads     int
 	embeddings  bool
+	typeK       GGMLType
+	typeV       GGMLType
 }
 
 func defaultContextConfig() contextConfig {
@@ -53,6 +55,8 @@ func defaultContextConfig() contextConfig {
 		batchSize:   0, // 0 = use default
 		threads:     0, // 0 = use default
 		embeddings:  false,
+		typeK:       GGMLTypeF16, // llama.cpp default
+		typeV:       GGMLTypeF16, // llama.cpp default
 	}
 }
 
@@ -74,6 +78,18 @@ func WithThreads(n int) ContextOption {
 // WithEmbeddings enables embedding output mode.
 func WithEmbeddings() ContextOption {
 	return func(c *contextConfig) { c.embeddings = true }
+}
+
+// WithTypeK sets the data type for the KV cache K values (EXPERIMENTAL).
+// Use lower-precision types (e.g. GGMLTypeQ8_0, GGMLTypeQ4_0) to reduce memory usage.
+func WithTypeK(t GGMLType) ContextOption {
+	return func(c *contextConfig) { c.typeK = t }
+}
+
+// WithTypeV sets the data type for the KV cache V values (EXPERIMENTAL).
+// Use lower-precision types (e.g. GGMLTypeQ8_0, GGMLTypeQ4_0) to reduce memory usage.
+func WithTypeV(t GGMLType) ContextOption {
+	return func(c *contextConfig) { c.typeV = t }
 }
 
 // GenerateOption configures text generation.

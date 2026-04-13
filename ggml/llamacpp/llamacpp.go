@@ -91,6 +91,8 @@ func (m *Model) NewContext(opts ...ContextOption) (*Context, error) {
 		params.n_threads_batch = C.int32_t(cfg.threads)
 	}
 	params.embeddings = C.bool(cfg.embeddings)
+	params.type_k = C.enum_ggml_type(cfg.typeK)
+	params.type_v = C.enum_ggml_type(cfg.typeV)
 
 	ctx := C.llama_init_from_model(m.c, params)
 	if ctx == nil {
