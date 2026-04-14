@@ -55,6 +55,29 @@ int go_llama_embeddings(
 // Last error message (thread-local).
 const char* go_llama_last_error(void);
 
+// Image data for multimodal generation.
+typedef struct {
+    const unsigned char* data;
+    int size;
+} go_llama_image;
+
+// Generation with images: tokenize prompt + images via mtmd, evaluate, then generate.
+// mmproj_path: path to the multimodal projector GGUF file.
+// Returns 0 on success, -1 on error.
+int go_llama_generate_with_images(
+    void* ctx_ptr,
+    void* model_ptr,
+    const char* mmproj_path,
+    const char* prompt,
+    go_llama_image* images,
+    int n_images,
+    go_llama_generate_params params,
+    go_llama_token_callback callback,
+    void* user_data);
+
+// Free cached multimodal context (call on shutdown).
+void go_llama_mtmd_free(void);
+
 #ifdef __cplusplus
 }
 #endif

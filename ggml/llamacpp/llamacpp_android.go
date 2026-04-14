@@ -7,6 +7,6 @@ package llamacpp
 
 /*
 #cgo android,arm64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/android-arm64
-#cgo android LDFLAGS: -Wl,--start-group -lcommon -lllama -lggml-cpu -lggml-base -lggml -Wl,--end-group -lstdc++ -lm -ldl -llog
+#cgo android LDFLAGS: -Wl,--start-group -lmtmd -lcommon -lllama -lggml-cpu -lggml-base -lggml -Wl,--end-group -lstdc++ -lm -ldl -llog
 */
 import "C"

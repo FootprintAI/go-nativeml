@@ -12,7 +12,7 @@ package llamacpp
 #cgo CXXFLAGS: -std=c++17 -I${SRCDIR}/third_party/include -I${SRCDIR}/third_party/ggml/include -I${SRCDIR}/third_party/common
 #cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-arm64
 #cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/third_party/prebuilt/darwin-amd64
-#cgo darwin LDFLAGS: -lcommon -lllama -lggml-cpu -lggml-base -lggml -lggml-blas -lggml-metal -L/usr/local/opt/libomp/lib -L/opt/homebrew/opt/libomp/lib -lomp -framework Accelerate -framework Metal -framework Foundation -lstdc++ -lm
+#cgo darwin LDFLAGS: -lmtmd -lcommon -lllama -lggml-cpu -lggml-base -lggml -lggml-blas -lggml-metal -L/usr/local/opt/libomp/lib -L/opt/homebrew/opt/libomp/lib -lomp -framework Accelerate -framework Metal -framework Foundation -lstdc++ -lm
 #include <stdlib.h>
 #include <stdbool.h>
 #include "wrapper.h"
@@ -315,6 +315,80 @@ func (c *Context) GetEmbeddings(text string) ([]float32, error) {
 		return nil, fmt.Errorf("embeddings failed: %s", errMsg)
 	}
 	return out[:n], nil
+}
+
+// GenerateStreamWithImages runs multimodal generation with images, streaming tokens via callback.
+// mmprojPath is the path to the multimodal projector GGUF file.
+// images is a slice of raw image bytes (JPEG/PNG).
+// Return false from cb to stop generation.
+func (c *Context) GenerateStreamWithImages(prompt string, images [][]byte, mmprojPath string, cb func(token string) bool, opts ...GenerateOption) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.c == nil || c.model.c == nil {
+		return errors.New("context or model is closed")
+	}
+
+	cfg := defaultGenerateConfig()
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	cprompt := C.CString(prompt)
+	defer C.free(unsafe.Pointer(cprompt))
+
+	cmmproj := C.CString(mmprojPath)
+	defer C.free(unsafe.Pointer(cmmproj))
+
+	params := C.go_llama_default_generate_params()
+	params.max_tokens = C.int(cfg.maxTokens)
+	params.temperature = C.float(cfg.temperature)
+	params.top_k = C.int(cfg.topK)
+	params.top_p = C.float(cfg.topP)
+	params.min_p = C.float(cfg.minP)
+	params.repeat_penalty = C.float(cfg.repeatPenalty)
+	params.freq_penalty = C.float(cfg.freqPenalty)
+	params.presence_penalty = C.float(cfg.presencePenalty)
+	params.seed = C.int(cfg.seed)
+	params.penalty_last_n = C.int(cfg.penaltyLastN)
+
+	// Build C array of go_llama_image.
+	var cImages *C.go_llama_image
+	if len(images) > 0 {
+		cImagesSlice := make([]C.go_llama_image, len(images))
+		for i, img := range images {
+			cImagesSlice[i].data = (*C.uchar)(unsafe.Pointer(&img[0]))
+			cImagesSlice[i].size = C.int(len(img))
+		}
+		cImages = &cImagesSlice[0]
+	}
+
+	state := &streamState{cb: cb}
+	handle := registerCallback(state)
+	defer unregisterCallback(handle)
+
+	rc := C.go_llama_generate_with_images(
+		unsafe.Pointer(c.c),
+		unsafe.Pointer(c.model.c),
+		cmmproj,
+		cprompt,
+		cImages,
+		C.int(len(images)),
+		params,
+		C.go_llama_token_callback(C.goTokenCallbackBridge),
+		unsafe.Pointer(handle),
+	)
+
+	if rc != 0 {
+		errMsg := C.GoString(C.go_llama_last_error())
+		return fmt.Errorf("generate with images failed: %s", errMsg)
+	}
+	return nil
+}
+
+// FreeMTMD frees the cached multimodal context. Call on shutdown.
+func FreeMTMD() {
+	C.go_llama_mtmd_free()
 }
 
 // Close frees the context resources.
