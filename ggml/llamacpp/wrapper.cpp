@@ -10,6 +10,8 @@
 #include "llama.h"
 #include "common.h"
 #include "sampling.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
 
 #include <string>
 #include <vector>
@@ -270,6 +272,193 @@ int go_llama_embeddings(
 
 const char* go_llama_last_error(void) {
     return g_last_error.c_str();
+}
+
+// Cached multimodal context — lazily initialized, reused across calls.
+static mtmd_context* g_mtmd_ctx = nullptr;
+static std::string   g_mtmd_path;
+
+int go_llama_generate_with_images(
+    void* ctx_ptr,
+    void* model_ptr,
+    const char* mmproj_path,
+    const char* prompt,
+    go_llama_image* images,
+    int n_images,
+    go_llama_generate_params params,
+    go_llama_token_callback callback,
+    void* user_data)
+{
+    auto* ctx   = static_cast<llama_context*>(ctx_ptr);
+    auto* model = static_cast<llama_model*>(model_ptr);
+
+    if (!ctx || !model || !prompt || !mmproj_path) {
+        set_error("null context, model, prompt, or mmproj_path");
+        return -1;
+    }
+
+    // (Re-)initialize mtmd context if needed.
+    std::string path_str(mmproj_path);
+    if (!g_mtmd_ctx || g_mtmd_path != path_str) {
+        if (g_mtmd_ctx) {
+            mtmd_free(g_mtmd_ctx);
+            g_mtmd_ctx = nullptr;
+        }
+        mtmd_context_params mparams = mtmd_context_params_default();
+        mparams.use_gpu  = true;
+        mparams.warmup   = true;
+        g_mtmd_ctx = mtmd_init_from_file(mmproj_path, model, mparams);
+        if (!g_mtmd_ctx) {
+            set_error("failed to initialize mtmd context from mmproj");
+            return -1;
+        }
+        g_mtmd_path = path_str;
+    }
+
+    // Clear KV cache.
+    llama_memory_clear(llama_get_memory(ctx), false);
+
+    const llama_vocab* vocab = llama_model_get_vocab(model);
+    if (!vocab) {
+        set_error("failed to get vocab from model");
+        return -1;
+    }
+
+    // Build bitmaps from raw image bytes using the helper.
+    std::vector<mtmd_bitmap*> bitmaps(n_images);
+    for (int i = 0; i < n_images; i++) {
+        bitmaps[i] = mtmd_helper_bitmap_init_from_buf(
+            g_mtmd_ctx, images[i].data, (size_t)images[i].size);
+        if (!bitmaps[i]) {
+            // Free already-created bitmaps.
+            for (int j = 0; j < i; j++) {
+                mtmd_bitmap_free(bitmaps[j]);
+            }
+            set_error("failed to decode image data");
+            return -1;
+        }
+    }
+
+    // Build const pointer array for mtmd_tokenize.
+    std::vector<const mtmd_bitmap*> bitmap_ptrs(n_images);
+    for (int i = 0; i < n_images; i++) {
+        bitmap_ptrs[i] = bitmaps[i];
+    }
+
+    // Tokenize prompt + images.
+    mtmd_input_text input_text;
+    input_text.text         = prompt;
+    input_text.add_special  = true;
+    input_text.parse_special = true;
+
+    mtmd_input_chunks* chunks = mtmd_input_chunks_init();
+    int32_t tok_rc = mtmd_tokenize(g_mtmd_ctx, chunks, &input_text,
+                                   bitmap_ptrs.data(), (size_t)n_images);
+
+    // Free bitmaps — tokenize has consumed them.
+    for (int i = 0; i < n_images; i++) {
+        mtmd_bitmap_free(bitmaps[i]);
+    }
+
+    if (tok_rc != 0) {
+        mtmd_input_chunks_free(chunks);
+        set_error("mtmd_tokenize failed (marker/image count mismatch or preprocessing error)");
+        return -1;
+    }
+
+    // Evaluate all chunks (text + image) into KV cache using the helper.
+    llama_pos n_past = 0;
+    int32_t eval_rc = mtmd_helper_eval_chunks(g_mtmd_ctx, ctx, chunks,
+                                              /*n_past=*/0, /*seq_id=*/0,
+                                              (int32_t)llama_n_batch(ctx),
+                                              /*logits_last=*/true,
+                                              &n_past);
+    mtmd_input_chunks_free(chunks);
+    if (eval_rc != 0) {
+        set_error("mtmd_helper_eval_chunks failed");
+        return -1;
+    }
+
+    // Build sampling parameters (same as go_llama_generate).
+    common_params_sampling sparams;
+    sparams.seed            = (uint32_t)params.seed;
+    sparams.temp            = params.temperature;
+    sparams.top_k           = params.top_k;
+    sparams.top_p           = params.top_p;
+    sparams.min_p           = params.min_p;
+    sparams.penalty_repeat  = params.repeat_penalty;
+    sparams.penalty_freq    = params.freq_penalty;
+    sparams.penalty_present = params.presence_penalty;
+    sparams.penalty_last_n  = params.penalty_last_n;
+
+    common_sampler* smpl = common_sampler_init(model, sparams);
+    if (!smpl) {
+        set_error("failed to initialize sampler");
+        return -1;
+    }
+
+    // Generation loop.
+    char piece_buf[128];
+    int n_cur = (int)n_past;
+    const int n_ctx = (int)llama_n_ctx(ctx);
+    const int max_tokens = params.max_tokens > 0 ? params.max_tokens : 512;
+
+    for (int i = 0; i < max_tokens; i++) {
+        llama_token new_token = common_sampler_sample(smpl, ctx, -1);
+        common_sampler_accept(smpl, new_token, /*accept_grammar=*/true);
+
+        if (llama_vocab_is_eog(vocab, new_token)) {
+            break;
+        }
+
+        int n_piece = llama_token_to_piece(vocab, new_token,
+                                           piece_buf, sizeof(piece_buf) - 1,
+                                           /*lstrip=*/0, /*special=*/false);
+        if (n_piece < 0) {
+            continue;
+        }
+        piece_buf[n_piece] = '\0';
+
+        if (callback) {
+            bool cb_ok = callback(piece_buf, n_piece, user_data);
+            if (!cb_ok) {
+                break;
+            }
+        }
+
+        // Prepare next single-token batch.
+        llama_batch next_batch = llama_batch_init(1, 0, 1);
+        next_batch.token[0]     = new_token;
+        next_batch.pos[0]       = n_cur;
+        next_batch.n_seq_id[0]  = 1;
+        next_batch.seq_id[0][0] = 0;
+        next_batch.logits[0]    = 1;
+        next_batch.n_tokens     = 1;
+        n_cur++;
+
+        int rc = llama_decode(ctx, next_batch);
+        llama_batch_free(next_batch);
+        if (rc != 0) {
+            common_sampler_free(smpl);
+            set_error("llama_decode failed during generation");
+            return -1;
+        }
+
+        if (n_cur >= n_ctx) {
+            break;
+        }
+    }
+
+    common_sampler_free(smpl);
+    return 0;
+}
+
+void go_llama_mtmd_free(void) {
+    if (g_mtmd_ctx) {
+        mtmd_free(g_mtmd_ctx);
+        g_mtmd_ctx = nullptr;
+        g_mtmd_path.clear();
+    }
 }
 
 } // extern "C"
