@@ -13,6 +13,7 @@
 #   make build-libs-linux-cpu         # Build linux-amd64 CPU only
 #   make build-libs-linux-cuda        # Build linux-amd64 CUDA only
 #   make build-libs-linux-vulkan      # Build linux-amd64 Vulkan only
+#   make build-libs-linux-arm64       # Build linux-arm64 (CPU) via qemu emulation
 #   make build-libs-android           # Build android-arm64 via NDK
 #   make build-libs-all               # Build native + all linux + android
 #   make clean                        # Remove temp build dirs (keeps prebuilt .a + headers)
@@ -38,7 +39,7 @@ WHISPER_PREBUILT := $(WHISPER_THIRD_PARTY)/prebuilt/$(PLATFORM)
 
 .PHONY: build-libs build-libs-llama build-libs-whisper \
        build-libs-linux build-libs-linux-cpu build-libs-linux-cuda build-libs-linux-vulkan \
-       build-libs-android build-libs-all clean verify
+       build-libs-linux-arm64 build-libs-android build-libs-all clean verify
 
 build-libs: build-libs-llama build-libs-whisper
 
@@ -137,6 +138,29 @@ build-libs-linux-cuda:
 
 build-libs-linux-vulkan:
 	$(call build-linux-variant,vulkan,-vulkan)
+
+# ============================================================================
+# Docker build for linux-arm64 (cross-compile via aarch64-linux-gnu toolchain)
+# ============================================================================
+# Uses Dockerfile.libs-arm64 which runs aarch64 gcc/g++ inside an amd64
+# container. No qemu/binfmt needed (works in unprivileged LXC).
+build-libs-linux-arm64:
+	@echo "==> Building linux-arm64 static libraries via Docker (cross-compile)..."
+	docker build -f Dockerfile.libs-arm64 -o ./out .
+	@mkdir -p $(LLAMA_THIRD_PARTY)/prebuilt/linux-arm64
+	cp out/llama.cpp/linux-arm64/*.a $(LLAMA_THIRD_PARTY)/prebuilt/linux-arm64/
+	@mkdir -p $(LLAMA_THIRD_PARTY)/include $(LLAMA_THIRD_PARTY)/ggml/include $(LLAMA_THIRD_PARTY)/common
+	cp out/llama.cpp/include/*.h $(LLAMA_THIRD_PARTY)/include/
+	cp out/llama.cpp/ggml/include/*.h $(LLAMA_THIRD_PARTY)/ggml/include/
+	cp out/llama.cpp/common/common.h $(LLAMA_THIRD_PARTY)/common/
+	cp out/llama.cpp/common/sampling.h $(LLAMA_THIRD_PARTY)/common/
+	@mkdir -p $(WHISPER_THIRD_PARTY)/prebuilt/linux-arm64
+	cp out/whisper.cpp/linux-arm64/*.a $(WHISPER_THIRD_PARTY)/prebuilt/linux-arm64/
+	@mkdir -p $(WHISPER_THIRD_PARTY)/include $(WHISPER_THIRD_PARTY)/ggml/include
+	cp out/whisper.cpp/include/*.h $(WHISPER_THIRD_PARTY)/include/
+	cp out/whisper.cpp/ggml/include/*.h $(WHISPER_THIRD_PARTY)/ggml/include/
+	rm -rf out
+	@echo "==> linux-arm64 libraries ready"
 
 # ============================================================================
 # Docker build for android-arm64 (cross-compile via Android NDK)

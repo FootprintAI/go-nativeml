@@ -1,0 +1,98 @@
+# Dockerfile.libs-arm64 — cross-compile linux-arm64 static libraries
+#
+# Uses aarch64-linux-gnu gcc/g++ toolchain on an amd64 host. No qemu/binfmt
+# required, which makes it work inside unprivileged LXC where binfmt_misc
+# is read-only.
+#
+# Usage:
+#   docker build -f Dockerfile.libs-arm64 -o ./out .
+
+# ============================================================================
+# Stage: Download sources (shared)
+# ============================================================================
+FROM golang:1.24-bookworm AS sources
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY go.mod ./
+COPY version.go ./
+COPY cmd/versioncmd/ ./cmd/versioncmd/
+
+RUN LLAMA_VERSION=$(go run ./cmd/versioncmd llama.cpp) && \
+    echo "Downloading llama.cpp ${LLAMA_VERSION}..." && \
+    wget -qO llama.cpp.tar.gz "https://github.com/ggerganov/llama.cpp/archive/refs/tags/${LLAMA_VERSION}.tar.gz" && \
+    mkdir -p llama-src && \
+    tar xzf llama.cpp.tar.gz --strip-components=1 -C llama-src && \
+    rm llama.cpp.tar.gz
+
+RUN WHISPER_VERSION=$(go run ./cmd/versioncmd whisper.cpp) && \
+    echo "Downloading whisper.cpp ${WHISPER_VERSION}..." && \
+    wget -qO whisper.cpp.tar.gz "https://github.com/ggerganov/whisper.cpp/archive/refs/tags/${WHISPER_VERSION}.tar.gz" && \
+    mkdir -p whisper-src && \
+    tar xzf whisper.cpp.tar.gz --strip-components=1 -C whisper-src && \
+    rm whisper.cpp.tar.gz
+
+# ============================================================================
+# Builder: cross-compile to aarch64-linux-gnu
+# ============================================================================
+FROM debian:bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake \
+    crossbuild-essential-arm64 && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY --from=sources /src/llama-src llama-src
+COPY --from=sources /src/whisper-src whisper-src
+
+RUN printf '%s\n' \
+    'set(CMAKE_SYSTEM_NAME Linux)' \
+    'set(CMAKE_SYSTEM_PROCESSOR aarch64)' \
+    'set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)' \
+    'set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)' \
+    'set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)' \
+    'set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)' \
+    'set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)' \
+    > /src/aarch64-toolchain.cmake
+
+# Build llama.cpp (aarch64)
+RUN cd llama-src && \
+    cmake -B build \
+        -DCMAKE_TOOLCHAIN_FILE=/src/aarch64-toolchain.cmake \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_NATIVE=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# Build whisper.cpp (aarch64)
+RUN cd whisper-src && \
+    cmake -B build \
+        -DCMAKE_TOOLCHAIN_FILE=/src/aarch64-toolchain.cmake \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DGGML_NATIVE=OFF && \
+    cmake --build build --config Release -j$(nproc)
+
+# Collect llama.cpp artifacts
+RUN mkdir -p /out/llama.cpp/linux-arm64 /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
+    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-arm64/ \; && \
+    find /out/llama.cpp/linux-arm64 -name "*.a" -exec aarch64-linux-gnu-strip --strip-debug {} \; && \
+    cp llama-src/include/*.h /out/llama.cpp/include/ && \
+    cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
+    cp llama-src/common/common.h /out/llama.cpp/common/ && \
+    cp llama-src/common/sampling.h /out/llama.cpp/common/ && \
+    cp llama-src/tools/mtmd/mtmd.h /out/llama.cpp/include/ && \
+    cp llama-src/tools/mtmd/mtmd-helper.h /out/llama.cpp/include/
+
+# Collect whisper.cpp artifacts
+RUN mkdir -p /out/whisper.cpp/linux-arm64 /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
+    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-arm64/ \; && \
+    find /out/whisper.cpp/linux-arm64 -name "*.a" -exec aarch64-linux-gnu-strip --strip-debug {} \; && \
+    cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
+    cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
+
+FROM scratch
+COPY --from=builder /out/ /

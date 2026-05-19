@@ -92,7 +92,9 @@ RUN mkdir -p /out/llama.cpp/android-arm64 /out/llama.cpp/include /out/llama.cpp/
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
-    cp llama-src/common/sampling.h /out/llama.cpp/common/
+    cp llama-src/common/sampling.h /out/llama.cpp/common/ && \
+    cp llama-src/tools/mtmd/mtmd.h /out/llama.cpp/include/ && \
+    cp llama-src/tools/mtmd/mtmd-helper.h /out/llama.cpp/include/
 
 # Collect whisper.cpp artifacts and strip debug symbols
 RUN mkdir -p /out/whisper.cpp/android-arm64 /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \

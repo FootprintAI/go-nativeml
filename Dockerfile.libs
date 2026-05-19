@@ -53,6 +53,8 @@ RUN WHISPER_VERSION=$(go run ./cmd/versioncmd whisper.cpp) && \
 # ============================================================================
 FROM golang:1.24-bookworm AS builder-cpu
 
+ARG ARCH_SUFFIX=linux-amd64
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake && \
     rm -rf /var/lib/apt/lists/*
@@ -72,18 +74,20 @@ RUN cd whisper-src && \
     cmake --build build --config Release -j$(nproc)
 
 # Collect llama.cpp artifacts and strip debug symbols
-RUN mkdir -p /out/llama.cpp/linux-amd64 /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
-    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/linux-amd64/ \; && \
-    find /out/llama.cpp/linux-amd64 -name "*.a" -exec strip --strip-debug {} \; && \
+RUN mkdir -p /out/llama.cpp/${ARCH_SUFFIX} /out/llama.cpp/include /out/llama.cpp/ggml/include /out/llama.cpp/common && \
+    find llama-src/build -name "*.a" -exec cp {} /out/llama.cpp/${ARCH_SUFFIX}/ \; && \
+    find /out/llama.cpp/${ARCH_SUFFIX} -name "*.a" -exec strip --strip-debug {} \; && \
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
-    cp llama-src/common/sampling.h /out/llama.cpp/common/
+    cp llama-src/common/sampling.h /out/llama.cpp/common/ && \
+    cp llama-src/tools/mtmd/mtmd.h /out/llama.cpp/include/ && \
+    cp llama-src/tools/mtmd/mtmd-helper.h /out/llama.cpp/include/
 
 # Collect whisper.cpp artifacts and strip debug symbols
-RUN mkdir -p /out/whisper.cpp/linux-amd64 /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
-    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/linux-amd64/ \; && \
-    find /out/whisper.cpp/linux-amd64 -name "*.a" -exec strip --strip-debug {} \; && \
+RUN mkdir -p /out/whisper.cpp/${ARCH_SUFFIX} /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
+    find whisper-src/build -name "*.a" -exec cp {} /out/whisper.cpp/${ARCH_SUFFIX}/ \; && \
+    find /out/whisper.cpp/${ARCH_SUFFIX} -name "*.a" -exec strip --strip-debug {} \; && \
     cp whisper-src/include/*.h /out/whisper.cpp/include/ && \
     cp whisper-src/ggml/include/*.h /out/whisper.cpp/ggml/include/
 
@@ -92,9 +96,15 @@ RUN mkdir -p /out/whisper.cpp/linux-amd64 /out/whisper.cpp/include /out/whisper.
 # ============================================================================
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS builder-cuda
 
+# gcc-12: gcc-13 hits an internal-compiler-error on fattn-mma-f16 templates
+# (cfgcleanup.cc:580 try_forward_edges) — reproducible at any -j on b9222.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake wget && \
-    rm -rf /var/lib/apt/lists/*
+    build-essential cmake wget gcc-12 g++-12 && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100
+
+ENV CC=gcc-12 CXX=g++-12
 
 WORKDIR /src
 COPY --from=sources /src/llama-src llama-src
@@ -117,7 +127,9 @@ RUN mkdir -p /out/llama.cpp/linux-amd64-cuda /out/llama.cpp/include /out/llama.c
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
-    cp llama-src/common/sampling.h /out/llama.cpp/common/
+    cp llama-src/common/sampling.h /out/llama.cpp/common/ && \
+    cp llama-src/tools/mtmd/mtmd.h /out/llama.cpp/include/ && \
+    cp llama-src/tools/mtmd/mtmd-helper.h /out/llama.cpp/include/
 
 # Collect whisper.cpp artifacts (CUDA variant) and strip debug symbols
 RUN mkdir -p /out/whisper.cpp/linux-amd64-cuda /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
@@ -133,9 +145,16 @@ RUN mkdir -p /out/whisper.cpp/linux-amd64-cuda /out/whisper.cpp/include /out/whi
 # (llama.cpp b8220+ needs VK_EXT_layer_settings from Vulkan 1.3.261+)
 FROM ubuntu:24.04 AS builder-vulkan
 
+# - spirv-headers: required since llama.cpp b9000+ (ggml-vulkan calls find_package(SPIRV-Headers))
+# - gcc-12: gcc-13 ICEs on common/arg.cpp.o under load
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake wget ca-certificates libvulkan-dev glslang-tools glslc && \
-    rm -rf /var/lib/apt/lists/*
+    build-essential cmake wget ca-certificates libvulkan-dev glslang-tools glslc \
+    spirv-headers gcc-12 g++-12 && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-12 100 && \
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-12 100
+
+ENV CC=gcc-12 CXX=g++-12
 
 WORKDIR /src
 COPY --from=sources /src/llama-src llama-src
@@ -158,7 +177,9 @@ RUN mkdir -p /out/llama.cpp/linux-amd64-vulkan /out/llama.cpp/include /out/llama
     cp llama-src/include/*.h /out/llama.cpp/include/ && \
     cp llama-src/ggml/include/*.h /out/llama.cpp/ggml/include/ && \
     cp llama-src/common/common.h /out/llama.cpp/common/ && \
-    cp llama-src/common/sampling.h /out/llama.cpp/common/
+    cp llama-src/common/sampling.h /out/llama.cpp/common/ && \
+    cp llama-src/tools/mtmd/mtmd.h /out/llama.cpp/include/ && \
+    cp llama-src/tools/mtmd/mtmd-helper.h /out/llama.cpp/include/
 
 # Collect whisper.cpp artifacts (Vulkan variant) and strip debug symbols
 RUN mkdir -p /out/whisper.cpp/linux-amd64-vulkan /out/whisper.cpp/include /out/whisper.cpp/ggml/include && \
